@@ -1,0 +1,174 @@
+---
+title: 'Practical Machine Learning  - Peer-graded Assignment: Prediction Assignment
+  Writeup'
+author: "Patricia Ortiz Su?rez"
+date: "July 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Executive Summary
+###Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These types of devices are part of the quantified self-movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+
+###Goal 
+**The goal for this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the way they did the exercise.** They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+####Methodology and cross validation
+The process that will be followed is to divide the **training** data set in two sub files that will me called **myTraining** and **myTesting**. myTraining will be used to create 4 different models using the following methods:**Decision Tree using rpart**, **Decision Tree using the C5.0 Algorithm**, **Generalized Boosted Model** and **Random Forest**. Then we will use these 4 models to classify the variable **classe** in the myTesting data set. After that we will look the accuracy of each model and will use the model with the higher level of accuracy to try to correctly classify the classe of the **testing** data set and use this information to answer the 20 questions quiz.
+
+The testing data set will not suffer any modification, it will only be used to apply the selected model and answer the 20 questions quiz.
+
+###Out of sample error
+The out of sample error will be calculated using the formula 1-accuracy, for each model.
+
+###Data
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+##Project development
+###Loading libraries
+```{r}
+suppressMessages(library(caret))
+suppressMessages(library(C50))
+suppressMessages(library(randomForest))
+suppressMessages(library(knitr))
+suppressMessages(library(rattle))
+
+```
+
+###Data gathering and processing
+```{r cache=TRUE}
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",header=TRUE, sep=",")
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",header=TRUE, sep=",")
+
+dim(training)
+dim(testing)
+```
+
+The training dataset has `r dim(training)[1]` observations and the testing data set has `r dim(testing)[1]` observations.
+
+
+####Removing unnecessary columns from training data set.
+The first 7 columns of the training dataset are `r names(training[,1:7])`. These columns are not necessary for classe prediction. They will be removed from the training data set.
+
+```{r}
+training <- training[,-(1:7)] 
+```
+
+Now we will proceed to remove any column that has 80% or more observations with NAs.
+
+```{r}
+nacol <- colSums((is.na(training)))/dim(training)[1] > 0.8 
+training <- training[,!nacol]
+```
+
+Finally, we will remove those columns that have almost zero variance since they will not add value to the prediction model.
+
+```{r}
+nzv <- nearZeroVar(training,saveMetrics = TRUE)
+training <- training[,!(nzv$nzv)]
+```
+
+After all the columns have been removed, the training dataset ended with `r dim(training)[2]` columns.
+
+####Dividing the training data set in two sets
+```{r}
+set.seed(20171001)
+inTrain <- createDataPartition(training$classe,p=0.7,list=FALSE)
+myTraining <- training[inTrain,]
+myTesting <- training[-inTrain,]
+```
+
+###Model Selection
+Now we will use the myTraining data set and the myTesting data set to create 4 different models and to check they accuracy for each model using the training data.
+
+####Decision Trees with rpart
+```{r cache=TRUE}
+set.seed(20171001)
+suppressMessages(rp_fit <- train(classe~.,data=myTraining,method="rpart"))
+suppressMessages(rp_predict <- predict(rp_fit,myTesting))
+rp_cm <- confusionMatrix(rp_predict, myTesting$classe)
+rp_outofsampleerror <- 1-rp_cm$overall[1]
+```
+####Decision Trees with C5.0 Algorithm
+```{r cache=TRUE}
+set.seed(20171001)
+suppressMessages(c5_fit <- C5.0(classe~.,data=myTraining))
+suppressMessages(c5_predict <- predict(c5_fit,myTesting))
+c5_cm <- confusionMatrix(c5_predict, myTesting$classe)
+c5_outofsampleerror <- 1-c5_cm$overall[1]
+```
+####Generalize Boosted Model
+```{r cache=TRUE}
+set.seed(20171001)
+suppressMessages(gbm_fit <- train(classe~.,method="gbm",data=myTraining,verbose=FALSE,
+                 trControl = trainControl(method="repeatedcv",
+                                          number=5,
+                                          repeats=1,
+                                          verboseIter=FALSE)))
+suppressMessages(gbm_predict <- predict(gbm_fit,myTesting))
+gbm_cm <- confusionMatrix(gbm_predict, myTesting$classe)
+gbm_outofsampleerror <- 1-gbm_cm$overall[1]
+```
+####Random Forest
+```{r cache=TRUE}
+set.seed(20171001)
+suppressMessages(rf_fit <- train(classe~.,method="rf",
+                                 data=myTraining, trControl=trainControl(method = "cv", number = 4)))
+suppressMessages(rf_predict <- predict(rf_fit,myTesting))
+rf_cm <- confusionMatrix(rf_predict, myTesting$classe)
+rf_outofsampleerror <- 1-rf_cm$overall[1]
+```
+
+####Comparing the 4 models
+```{r}
+outofsampleerror <- c(rp_outofsampleerror,c5_outofsampleerror,gbm_outofsampleerror,rf_outofsampleerror)
+accuracycomparison <- data.frame(rpart = rp_cm$overall,c50= c5_cm$overall,gbm=gbm_cm$overall,rf=rf_cm$overall)
+accuracycomparison <- rbind(accuracycomparison,OutofSampleError=outofsampleerror)
+
+kable(accuracycomparison)
+```
+
+From the previous table we can see that Random Forest is the model with the smaller Out of Sample error and the higher accuracy.
+
+This is the model that will be used to answer the 20 questions quiz.
+
+```{r}
+suppressMessages(rf_result <- rf_predict_test <- predict(rf_fit,newdata=testing))
+```
+
+Here are the results for the quiz:
+```{r}
+rf_result
+```
+
+###Just for fun
+I decided to use the 4 models and try to predict the classe of the testing data set and see how the 4 of them compared.
+```{r}
+rp_result <- rp_predict_test <- suppressMessages(predict(rp_fit,newdata=testing))
+c5_result <- suppressMessages(c5_predict_test <- predict(c5_fit,newdata=testing))
+gbm_result <- gbm_predict_test <- suppressMessages(predict(gbm_fit,newdata=testing))
+observations <- 1:dim(testing)[1]
+resultcomparison <- data.frame(observations,rp_result,c5_result,gbm_result,rf_result)
+kable(resultcomparison)
+```
+
+From the previous table we can see that for this particular data set (testing), Random Forest and the Generalized Boosted Model provided similar results. The Decision Tree with the C5.0 only classified one observation different, while the Decision Tree with rpart made a lot of different classifications with was expected given the presented accuracy for this model.
+
+##Appendix
+Here is the decision tree using rpart. The graphics for the other trees were a bit confusing and it was decided to not present them in this document.
+
+####Decision Tree with rpart
+```{r}
+fancyRpartPlot(rp_fit$finalModel)
+```
+
